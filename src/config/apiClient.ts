@@ -3,8 +3,11 @@ import { refreshToken } from "@/services/AuthService";
 import axios from "axios";
 import toast from "react-hot-toast";
 
+export const BACKEND_BASE_URL =
+  import.meta.env.VITE_BACKEND_BASE_URL || "http://localhost:8083";
+
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:8083/api/v1",
+  baseURL: import.meta.env.VITE_API_BASE_URL || `${BACKEND_BASE_URL}/api/v1`,
   headers: {
     "Content-Type": "application/json",
   },
@@ -12,9 +15,10 @@ const apiClient = axios.create({
   timeout: 10000,
 });
 
-//every request: before
+// every request: before
 apiClient.interceptors.request.use((config) => {
   const accessToken = useAuth.getState().accessToken;
+
   if (accessToken) {
     config.headers.Authorization = `Bearer ${accessToken}`;
   }
@@ -38,42 +42,40 @@ function resolveQueue(newToken: string) {
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const is401 = error.response.status === 401;
+    const is401 = error.response?.status === 401;
     const original = error.config;
-    console.log(original);
-    console.log("original retry: ", original._retry);
-    if (!is401 || original._retry) {
-      //message:
 
-      if (error.response && error.response.data)
+    if (!is401 || original._retry) {
+      if (error.response && error.response.data) {
         toast.error(error.response.data?.message || "An error occurred");
-      console.error("API Error:", error.response.data);
+      }
+
+      console.error("API Error:", error.response?.data);
       console.error("Full error:", error);
 
       return Promise.reject(error);
     }
 
     original._retry = true;
-    //we will try to refresh the token:
+
     if (isRefreshing) {
-      console.log("added to queue");
       return new Promise((resolve, reject) => {
         queueRequest((newToken: string) => {
-          if (!newToken) return reject();
+          if (!newToken || newToken === "null") return reject();
           original.headers.Authorization = `Bearer ${newToken}`;
           resolve(apiClient(original));
         });
       });
     }
 
-    //start refresh
     isRefreshing = true;
 
     try {
-      console.log("start refreshing...");
       const loginResponse = await refreshToken();
       const newToken = loginResponse.accessToken;
+
       if (!newToken) throw new Error("no access token received");
+
       useAuth
         .getState()
         .changeLocalLoginData(
@@ -81,9 +83,11 @@ apiClient.interceptors.response.use(
           loginResponse.user,
           true
         );
-      //
+
       resolveQueue(newToken);
+
       original.headers.Authorization = `Bearer ${newToken}`;
+
       return apiClient(original);
     } catch (error) {
       resolveQueue("null");
